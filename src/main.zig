@@ -122,6 +122,8 @@ fn addFortyTwo(x: anytype) @TypeOf(x) {
 }
 
 fn quickDemo() void {
+    const a = "0";
+    std.debug.print("zero str: {x}\n", .{a});
     const result = addFortyTwo(10.0);
     std.debug.print("Result: {d}\n", .{result});
 
@@ -143,6 +145,130 @@ fn quickDemo() void {
     std.debug.print("{}\n", .{@sizeOf(Empty)});
 }
 
+fn Layer(comptime I: usize, comptime O: usize) type {
+    return struct {
+        inputs: usize,
+        outputs: usize,
+
+        const Self = @This();
+
+        pub fn init() Self {
+            return Self{
+                .inputs = I,
+                .outputs = O,
+            };
+        }
+
+        pub fn input_len(self: *const Self) usize {
+            return self.inputs;
+        }
+
+        pub fn output_len(self: *const Self) usize {
+            return self.outputs;
+        }
+    };
+}
+
+fn dnnDemo() void {
+    const layer1 = Layer(100, 20).init();
+    var layer2 = Layer(20, 10).init();
+
+    std.debug.print("layer1: {} layer2: {}\n", .{ @TypeOf(layer1), @TypeOf(layer2) });
+
+    const l1_i = layer1.input_len();
+    const l2_i = layer2.input_len();
+    std.debug.print("l1_i= {} l2_i= {}\n", .{ l1_i, l2_i });
+}
+
+pub fn Array(comptime T: type, comptime N: ?usize, comptime Shape: ?[]const usize) type {
+    return struct {
+        shape: if (Shape) |s| [s.len]usize else if (N) |n| [n]usize else []usize,
+        data: []T,
+
+        pub fn init(allocator: *std.mem.Allocator, shape: if (Shape) |s| [s.len]usize else if (N) |n| [n]usize else []usize) !Array(T, N, Shape) {
+            var total: usize = 1;
+            for (shape) |d| total *= d;
+            const buf = try allocator.alloc(T, total);
+            return Array(T, N, Shape){ .shape = shape, .data = buf };
+        }
+
+        pub fn totalSize(self: *const Array(T, N, Shape)) usize {
+            var total: usize = 1;
+            for (self.shape) |d| total *= d;
+            return total;
+        }
+
+        pub fn coordToIndex(self: *const Array(T, N, Shape), coord: if (Shape) |s| [s.len]usize else if (N) |n| [n]usize else []usize) usize {
+            if (coord.len != self.shape.len) @panic("dimension mismatch");
+            var idx: usize = 0;
+            var stride: usize = 1;
+            var i: usize = self.shape.len;
+            while (i > 0) : (i -= 1) {
+                idx += coord[i - 1] * stride;
+                stride *= self.shape[i - 1];
+            }
+            return idx;
+        }
+
+        pub fn set(self: *Array(T, N, Shape), coord: anytype, value: T) void {
+            self.data[self.coordToIndex(coord)] = value;
+        }
+
+        pub fn get(self: *const Array(T, N, Shape), coord: anytype) T {
+            return self.data[self.coordToIndex(coord)];
+        }
+
+        pub fn deinit(self: *Array(T, N, Shape), allocator: *std.mem.Allocator) void {
+            allocator.free(self.data);
+        }
+    };
+}
+
+pub fn arrayDemo() !void {
+    var allocator = std.heap.page_allocator;
+
+    // 1. 编译时维度和形状固定
+    var arr_static = try Array(u32, 2, &.{ 3, 4 }).init(&allocator, [2]usize{ 3, 4 });
+    arr_static.set([2]usize{ 1, 2 }, 42);
+    std.debug.print("Static value: {}\n", .{arr_static.get([2]usize{ 1, 2 })});
+    arr_static.deinit(&allocator);
+
+    // 2. 编译时维度固定，形状运行时决定
+    var arr_multi = try Array(u32, 2, null).init(&allocator, [2]usize{ 5, 6 });
+    arr_multi.set([2]usize{ 2, 3 }, 99);
+    std.debug.print("Multi value: {}\n", .{arr_multi.get([2]usize{ 2, 3 })});
+    arr_multi.deinit(&allocator);
+
+    // 3. 维度和形状都运行时决定
+    var shape = try allocator.alloc(usize, 3);
+    shape[0] = 2;
+    shape[1] = 3;
+    shape[2] = 4;
+    var arr_dyn = try Array(u32, null, null).init(&allocator, shape);
+    arr_dyn.set(&[_]usize{ 1, 2, 3 }, 123);
+    std.debug.print("Dyn value: {}\n", .{arr_dyn.get(&[_]usize{ 1, 2, 3 })});
+    arr_dyn.deinit(&allocator);
+    allocator.free(shape);
+}
+
+const Base64 = struct {
+    _table: *const [64]u8,
+
+    pub fn init() Base64 {
+        const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        const lower = "abcdefghijklmnopqrstuvwxyz";
+        const digits = "0123456789";
+        const symbs = "+/";
+        const padding = "=";
+        const table = upper ++ lower ++ digits ++ symbs ++ padding;
+        return Base64{ ._table = table };
+    }
+
+    pub fn _char_at(self: Base64, index: usize) u8 {
+        return self._table[index];
+    }
+};
+
 pub fn main() !void {
     // try basic_demo();
     // try allocator_demo();
@@ -150,7 +276,9 @@ pub fn main() !void {
     // memory_demo();
     // try threadlocal_demo();
     // str_demo();
-    quickDemo();
+    // quickDemo();
+    // dnnDemo();
+    arrayDemo();
 }
 
 test "simple test" {

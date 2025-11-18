@@ -95,11 +95,62 @@ fn memory_demo() void {
     _ = y;
 }
 
+threadlocal var tlx: i32 = 1222;
+fn testTls() void {
+    std.debug.print("x is {}\n", .{tlx});
+    tlx += 1;
+
+    std.debug.print("x is {}\n", .{tlx});
+}
+
+fn threadlocal_demo() !void {
+    const thread1 = try std.Thread.spawn(.{}, testTls, .{});
+    const thread2 = try std.Thread.spawn(.{}, testTls, .{});
+
+    testTls();
+    thread1.join();
+    thread2.join();
+}
+
+fn str_demo() void {
+    const str = "Hello, World!";
+    std.debug.print("String: {s} {d}\n", .{ str, str[13] });
+}
+
+fn addFortyTwo(x: anytype) @TypeOf(x) {
+    return x + 42;
+}
+
+fn quickDemo() void {
+    const result = addFortyTwo(10.0);
+    std.debug.print("Result: {d}\n", .{result});
+
+    const m_4x4 = [4][4]f32{
+        [_]f32{ 1.0, 0.0, 0.0, 1.0 },
+        [_]f32{ 0.0, 1.0, 0.0, 1.0 },
+        [_]f32{ 0.0, 0.0, 1.0, 1.0 },
+        [_]f32{ 0.0, 0.0, 0.0, 1.0 },
+    };
+
+    for (m_4x4) |row| {
+        for (row) |col| {
+            std.debug.print("{d} ", .{col});
+        }
+        std.debug.print("\n", .{});
+    }
+
+    const Empty = struct {};
+    std.debug.print("{}\n", .{@sizeOf(Empty)});
+}
+
 pub fn main() !void {
     // try basic_demo();
     // try allocator_demo();
     // struct_demo();
-    memory_demo();
+    // memory_demo();
+    // try threadlocal_demo();
+    // str_demo();
+    quickDemo();
 }
 
 test "simple test" {

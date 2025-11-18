@@ -82,16 +82,14 @@ fn struct_demo() void {
     u.print_name();
 }
 
-fn add(x: u8, y: u8) *const u8 {
-    const result = x + y;
-    return &result;
+fn add(x: u8, y: u8) u8 {
+    return x + y;
 }
 
 fn memory_demo() void {
     const r = add(5, 27);
     const y = 333;
-    std.debug.print("r info: {}", .{r.*});
-    // _ = r;
+    std.debug.print("r info: {}", .{r});
     _ = y;
 }
 
@@ -185,7 +183,7 @@ pub fn Array(comptime T: type, comptime N: ?usize, comptime Shape: ?[]const usiz
         shape: if (Shape) |s| [s.len]usize else if (N) |n| [n]usize else []usize,
         data: []T,
 
-        pub fn init(allocator: *std.mem.Allocator, shape: if (Shape) |s| [s.len]usize else if (N) |n| [n]usize else []usize) !Array(T, N, Shape) {
+        pub fn init(allocator: std.mem.Allocator, shape: if (Shape) |s| [s.len]usize else if (N) |n| [n]usize else []usize) !Array(T, N, Shape) {
             var total: usize = 1;
             for (shape) |d| total *= d;
             const buf = try allocator.alloc(T, total);
@@ -198,7 +196,8 @@ pub fn Array(comptime T: type, comptime N: ?usize, comptime Shape: ?[]const usiz
             return total;
         }
 
-        pub fn coordToIndex(self: *const Array(T, N, Shape), coord: if (Shape) |s| [s.len]usize else if (N) |n| [n]usize else []usize) usize {
+        // 简化版本，直接接受切片作为坐标
+        pub fn coordToIndex(self: *const Array(T, N, Shape), coord: []const usize) usize {
             if (coord.len != self.shape.len) @panic("dimension mismatch");
             var idx: usize = 0;
             var stride: usize = 1;
@@ -210,49 +209,82 @@ pub fn Array(comptime T: type, comptime N: ?usize, comptime Shape: ?[]const usiz
             return idx;
         }
 
-        pub fn set(self: *Array(T, N, Shape), coord: anytype, value: T) void {
+        // 为切片类型提供set和get方法
+        pub fn setSlice(self: *Array(T, N, Shape), coord: []const usize, value: T) void {
+            std.debug.print("N: {} len: {}\n", .{ @TypeOf(N), @TypeOf(coord.len) });
+            if (N) |n| {
+                if (n != coord.len) @compileError("dimension mismatch checked" ++ std.fmt.comptimePrint("{}-{}", .{ n, coord.len }));
+            }
+
             self.data[self.coordToIndex(coord)] = value;
         }
 
-        pub fn get(self: *const Array(T, N, Shape), coord: anytype) T {
+        pub fn getSlice(self: *const Array(T, N, Shape), coord: []const usize) T {
+            // if (N != coord.len) @compileError("dimension mismatch checked");
             return self.data[self.coordToIndex(coord)];
         }
 
-        pub fn deinit(self: *Array(T, N, Shape), allocator: *std.mem.Allocator) void {
+        // 为静态数组类型提供set和get方法（适用于已知维度的情况）
+        pub fn setArray(self: *Array(T, N, Shape), comptime Dims: usize, coord: [Dims]usize, value: T) void {
+            // 编译时检查维度一致性
+            if (Shape) |s| {
+                if (Dims != s.len) @compileError("Coordinate dimensions must match array shape dimensions");
+            } else if (N) |n| {
+                if (Dims != n) @compileError("Coordinate dimensions must match array dimensions");
+            }
+            self.data[self.coordToIndex(coord[0..])] = value;
+        }
+
+        pub fn getArray(self: *const Array(T, N, Shape), comptime Dims: usize, coord: [Dims]usize) T {
+            // 编译时检查维度一致性
+            if (Shape) |s| {
+                if (Dims != s.len) @compileError("Coordinate dimensions must match array shape dimensions");
+            } else if (N) |n| {
+                if (Dims != n) @compileError("Coordinate dimensions must match array dimensions");
+            }
+            return self.data[self.coordToIndex(coord[0..])];
+        }
+
+        pub fn deinit(self: *Array(T, N, Shape), allocator: std.mem.Allocator) void {
             allocator.free(self.data);
         }
     };
 }
 
 pub fn arrayDemo() !void {
-    var allocator = std.heap.page_allocator;
+    const allocator = std.heap.page_allocator;
 
     // 1. 编译时维度和形状固定
-    var arr_static = try Array(u32, 2, &.{ 3, 4 }).init(&allocator, [2]usize{ 3, 4 });
-    arr_static.set([2]usize{ 1, 2 }, 42);
-    std.debug.print("Static value: {}\n", .{arr_static.get([2]usize{ 1, 2 })});
-    arr_static.deinit(&allocator);
+    var arr_static = try Array(u32, 2, &.{ 3, 4 }).init(allocator, [2]usize{ 3, 4 });
+    arr_static.setArray(2, [2]usize{ 1, 2 }, 42);
+
+    const coord_static = [2]usize{ 1, 1 };
+    arr_static.setSlice(coord_static[0..], 100);
+    std.debug.print("Static value: {}\n", .{arr_static.getArray(2, [2]usize{ 1, 2 })});
+    arr_static.deinit(allocator);
 
     // 2. 编译时维度固定，形状运行时决定
-    var arr_multi = try Array(u32, 2, null).init(&allocator, [2]usize{ 5, 6 });
-    arr_multi.set([2]usize{ 2, 3 }, 99);
-    std.debug.print("Multi value: {}\n", .{arr_multi.get([2]usize{ 2, 3 })});
-    arr_multi.deinit(&allocator);
+    var arr_multi = try Array(u32, 2, null).init(allocator, [2]usize{ 5, 6 });
+    arr_multi.setArray(2, [2]usize{ 2, 3 }, 99);
+    std.debug.print("Multi value: {}\n", .{arr_multi.getArray(2, [2]usize{ 2, 3 })});
+    arr_multi.deinit(allocator);
 
     // 3. 维度和形状都运行时决定
     var shape = try allocator.alloc(usize, 3);
+    defer allocator.free(shape);
     shape[0] = 2;
     shape[1] = 3;
     shape[2] = 4;
-    var arr_dyn = try Array(u32, null, null).init(&allocator, shape);
-    arr_dyn.set(&[_]usize{ 1, 2, 3 }, 123);
-    std.debug.print("Dyn value: {}\n", .{arr_dyn.get(&[_]usize{ 1, 2, 3 })});
-    arr_dyn.deinit(&allocator);
-    allocator.free(shape);
+    var arr_dyn = try Array(u32, null, null).init(allocator, shape);
+    // 创建一个有效的坐标，维度与shape匹配
+    const coord = [3]usize{ 0, 0, 0 };
+    arr_dyn.setSlice(coord[0..], 123);
+    std.debug.print("Dyn value: {}\n", .{arr_dyn.getSlice(coord[0..])});
+    arr_dyn.deinit(allocator);
 }
 
 const Base64 = struct {
-    _table: *const [64]u8,
+    _table: []const u8,
 
     pub fn init() Base64 {
         const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -278,7 +310,7 @@ pub fn main() !void {
     // str_demo();
     // quickDemo();
     // dnnDemo();
-    arrayDemo();
+    try arrayDemo();
 }
 
 test "simple test" {

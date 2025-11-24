@@ -178,121 +178,15 @@ fn dnnDemo() void {
     std.debug.print("l1_i= {} l2_i= {}\n", .{ l1_i, l2_i });
 }
 
-pub fn Array(comptime T: type, comptime N: ?usize, comptime Shape: ?[]const usize) type {
-    return struct {
-        shape: if (Shape) |s| [s.len]usize else if (N) |n| [n]usize else []usize,
-        data: []T,
-
-        pub fn init(allocator: std.mem.Allocator, shape: if (Shape) |s| [s.len]usize else if (N) |n| [n]usize else []usize) !Array(T, N, Shape) {
-            var total: usize = 1;
-            for (shape) |d| total *= d;
-            const buf = try allocator.alloc(T, total);
-            return Array(T, N, Shape){ .shape = shape, .data = buf };
-        }
-
-        pub fn totalSize(self: *const Array(T, N, Shape)) usize {
-            var total: usize = 1;
-            for (self.shape) |d| total *= d;
-            return total;
-        }
-
-        // 简化版本，直接接受切片作为坐标
-        pub fn coordToIndex(self: *const Array(T, N, Shape), coord: []const usize) usize {
-            if (coord.len != self.shape.len) @panic("dimension mismatch");
-            var idx: usize = 0;
-            var stride: usize = 1;
-            var i: usize = self.shape.len;
-            while (i > 0) : (i -= 1) {
-                idx += coord[i - 1] * stride;
-                stride *= self.shape[i - 1];
-            }
-            return idx;
-        }
-
-        // 为切片类型提供set和get方法
-        pub fn setSlice(self: *Array(T, N, Shape), coord: []const usize, value: T) void {
-            std.debug.print("N: {} len: {}\n", .{ @TypeOf(N), @TypeOf(coord.len) });
-            if (N) |n| {
-                if (n != coord.len) @compileError("dimension mismatch checked" ++ std.fmt.comptimePrint("{}-{}", .{ n, coord.len }));
-            }
-
-            self.data[self.coordToIndex(coord)] = value;
-        }
-
-        pub fn getSlice(self: *const Array(T, N, Shape), coord: []const usize) T {
-            // if (N != coord.len) @compileError("dimension mismatch checked");
-            return self.data[self.coordToIndex(coord)];
-        }
-
-        // 为静态数组类型提供set和get方法（适用于已知维度的情况）
-        pub fn setArray(self: *Array(T, N, Shape), comptime Dims: usize, coord: [Dims]usize, value: T) void {
-            // 编译时检查维度一致性
-            if (Shape) |s| {
-                if (Dims != s.len) @compileError("Coordinate dimensions must match array shape dimensions");
-            } else if (N) |n| {
-                if (Dims != n) @compileError("Coordinate dimensions must match array dimensions");
-            }
-            self.data[self.coordToIndex(coord[0..])] = value;
-        }
-
-        pub fn getArray(self: *const Array(T, N, Shape), comptime Dims: usize, coord: [Dims]usize) T {
-            // 编译时检查维度一致性
-            if (Shape) |s| {
-                if (Dims != s.len) @compileError("Coordinate dimensions must match array shape dimensions");
-            } else if (N) |n| {
-                if (Dims != n) @compileError("Coordinate dimensions must match array dimensions");
-            }
-            return self.data[self.coordToIndex(coord[0..])];
-        }
-
-        pub fn deinit(self: *Array(T, N, Shape), allocator: std.mem.Allocator) void {
-            allocator.free(self.data);
-        }
-    };
-}
-
-pub fn arrayDemo() !void {
-    const allocator = std.heap.page_allocator;
-
-    // 1. 编译时维度和形状固定
-    var arr_static = try Array(u32, 2, &.{ 3, 4 }).init(allocator, [2]usize{ 3, 4 });
-    arr_static.setArray(2, [2]usize{ 1, 2 }, 42);
-
-    const coord_static = [2]usize{ 1, 1 };
-    arr_static.setSlice(coord_static[0..], 100);
-    std.debug.print("Static value: {}\n", .{arr_static.getArray(2, [2]usize{ 1, 2 })});
-    arr_static.deinit(allocator);
-
-    // 2. 编译时维度固定，形状运行时决定
-    var arr_multi = try Array(u32, 2, null).init(allocator, [2]usize{ 5, 6 });
-    arr_multi.setArray(2, [2]usize{ 2, 3 }, 99);
-    std.debug.print("Multi value: {}\n", .{arr_multi.getArray(2, [2]usize{ 2, 3 })});
-    arr_multi.deinit(allocator);
-
-    // 3. 维度和形状都运行时决定
-    var shape = try allocator.alloc(usize, 3);
-    defer allocator.free(shape);
-    shape[0] = 2;
-    shape[1] = 3;
-    shape[2] = 4;
-    var arr_dyn = try Array(u32, null, null).init(allocator, shape);
-    // 创建一个有效的坐标，维度与shape匹配
-    const coord = [3]usize{ 0, 0, 0 };
-    arr_dyn.setSlice(coord[0..], 123);
-    std.debug.print("Dyn value: {}\n", .{arr_dyn.getSlice(coord[0..])});
-    arr_dyn.deinit(allocator);
-}
-
 const Base64 = struct {
-    _table: []const u8,
+    _table: *const [64]u8,
 
     pub fn init() Base64 {
         const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         const lower = "abcdefghijklmnopqrstuvwxyz";
         const digits = "0123456789";
         const symbs = "+/";
-        const padding = "=";
-        const table = upper ++ lower ++ digits ++ symbs ++ padding;
+        const table = upper ++ lower ++ digits ++ symbs;
         return Base64{ ._table = table };
     }
 
@@ -301,7 +195,36 @@ const Base64 = struct {
     }
 };
 
+fn _calc_encode_length(input: []const u8) !usize {
+    if (input.len < 3) {
+        return 4;
+    }
+
+    const n_groups = try std.math.divCeil(usize, input.len, 3);
+
+    return n_groups * 4;
+}
+fn _calc_decode_length(input: []const u8) !usize {
+    const n_groups = std.math.divExact(usize, input.len, 4);
+
+    var multiple_groups = n_groups * 3;
+    var i = input.len - 1;
+
+    while (i > 0) : (i -= 1) {
+        if (input[i] == '=') {
+            multiple_groups -= 1;
+        } else {
+            break;
+        }
+    }
+
+    return multiple_groups;
+}
+
 pub fn main() !void {
+    const base64 = Base64.init();
+    std.debug.print("character at index 28: {c}", .{base64._char_at(28)});
+
     // try basic_demo();
     // try allocator_demo();
     // struct_demo();
@@ -310,7 +233,22 @@ pub fn main() !void {
     // str_demo();
     // quickDemo();
     // dnnDemo();
-    try arrayDemo();
+    // const x: f32 = 500.3;
+    // const y: usize = @intFromFloat(x);
+    // std.debug.print("x: {} y: {}\n", .{ x, y });
+
+    // // _ = @TypeOf(true, 5.2);
+    // std.debug.print("blah: {} field: {}\n", .{ @hasDecl(Foo, "nope"), @field(Foo, "nope") });
+}
+
+const Foo = struct {
+    nope: i32,
+    pub var blah = "xxx";
+    const hi = 1;
+};
+fn foo(comptime T: type, ptr: *T) T {
+    ptr.* += 1;
+    return ptr.*;
 }
 
 test "simple test" {

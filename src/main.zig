@@ -260,10 +260,117 @@ fn moduleDemo() void {
     std.debug.print("un: {} type= {}", .{ un * un, @TypeOf(un) });
 }
 
-pub fn main() !void {
+fn ConstDim(comptime M: usize) type {
+    return struct {
+        fn size(_: @This()) usize {
+            return M;
+        }
+    };
+}
+
+fn RuntimeDim(m: usize) type {
+    return struct {
+        fn size(_: @This()) usize {
+            return m;
+        }
+    };
+}
+
+fn Tensor(comptime N: usize, comptime Shape: [N]usize, comptime T: type) type {
+    return struct {
+        data: [product(Shape)]T,
+        fn product(comptime arr: [N]usize) usize {
+            var result: usize = 1;
+            inline for (arr) |dim| {
+                result *= dim;
+            }
+            return result;
+        }
+
+        pub fn init(value: T) @This() {
+            return @This(){ .data = [_]T{value} ** product(Shape) };
+        }
+
+        pub fn format(
+            _: @This(),
+            writer: *std.Io.Writer,
+        ) std.Io.Writer.Error!void {
+            try writer.print("Tensor({})", .{product(Shape)});
+        }
+
+        fn computeOffset(idx: [N]usize) usize {
+            inline for (idx, 0..) |v, i| {
+                // const shape_v = Shape[i];
+                if (v >= Shape[i]) {
+                    // const msg = std.fmt.Prin("Index {} out of bounds for dimension {} (max={})", .{ v, i, shape_v });
+                    @panic("out of bounds");
+                }
+            }
+
+            var offset: usize = 0;
+            var stride: usize = 1;
+
+            var d: usize = N;
+            while (d > 0) : (d -= 1) {
+                offset += idx[d - 1] * stride;
+                stride *= Shape[d - 1];
+            }
+
+            return offset;
+        }
+
+        pub fn set(self: *@This(), idx: [N]usize, value: T) void {
+            self.data[computeOffset(idx)] = value;
+        }
+
+        pub fn get(self: *const @This(), idx: [N]usize) T {
+            return self.data[computeOffset(idx)];
+        }
+    };
+}
+
+fn tensorDemo() void {
+    const aaa = .{ usize, i32 };
+    std.debug.print("aaa: {}\n", .{aaa});
+
+    const Tensor3 = Tensor(3, .{ 1, 2, 3 }, f32);
+    const Tensor7 = Tensor(7, .{ 1, 2, 3, 4, 5, 6, 7 }, f80);
+    std.debug.print("t1: {} t2: {}\n", .{ Tensor3, Tensor7 });
+
+    const a1: [2]type = .{ Tensor3, Tensor7 };
+    // _ = a1;
+    inline for (a1, 0..) |tensor, idx| {
+        std.debug.print("tensor: {} idx= {}\n", .{ tensor, idx });
+    }
+    // std.debug.print("a1: {any}", .{a1});
+
+    const t1_type = @TypeOf(Tensor3);
+    const t2_type = @TypeOf(Tensor7);
+    if (t1_type == t2_type) {
+        std.debug.print("same type: {}\n", .{t1_type});
+    } else {
+        std.debug.print("different type: t1= {} t2= {}\n", .{ t1_type, t2_type });
+    }
+
+    const t1 = Tensor3.init(10);
+    const t2 = Tensor7.init(2.1);
+    std.debug.print("t1: {f} t2: {f}\n", .{ t1, t2 });
+
+    const e1 = t1.get(.{ 0, 1, 1 });
+    _ = e1;
+}
+
+fn base64Demo() void {
+    const a = "1234567890";
+    const b = a[5..@min(a.len, 12)];
+    std.debug.print("b: {s}\n", .{b});
+
     const base64 = Base64.init();
     std.debug.print("character at index 28: {c}", .{base64._char_at(28)});
+}
 
+pub fn main() !void {
+    tensorDemo();
     // try basic_demo();
     // try allocator_demo();
     // struct_demo();

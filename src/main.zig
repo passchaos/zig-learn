@@ -1,5 +1,6 @@
 const std = @import("std");
 const zig_learn = @import("zig_learn");
+const User = @import("models/user.zig").User;
 
 fn basic_demo() !void {
     const ns = [_]u8{ 48, 24, 33, 6 };
@@ -59,26 +60,26 @@ fn allocator_demo() !void {
     _ = slice;
 }
 
-const User = struct {
+const UserA = struct {
     id: u64,
     name: []const u8,
     email: []const u8,
 
-    fn init(id: u64, name: []const u8, email: []const u8) User {
-        return User{
+    fn init(id: u64, name: []const u8, email: []const u8) UserA {
+        return UserA{
             .id = id,
             .name = name,
             .email = email,
         };
     }
 
-    fn print_name(self: User) void {
+    fn print_name(self: UserA) void {
         std.debug.print("{s}\n", .{self.name});
     }
 };
 
 fn struct_demo() void {
-    const u = User.init(1, "pedro", "email@gmail.com");
+    const u = UserA.init(1, "pedro", "email@gmail.com");
     u.print_name();
 }
 
@@ -221,6 +222,44 @@ fn _calc_decode_length(input: []const u8) !usize {
     return multiple_groups;
 }
 
+fn eql(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    for (a, b, 0.., 0..) |a_e, b_e, i, j| {
+        std.debug.print("a_e: {} b_e: {} i: {} j: {}\n", .{ a_e, b_e, i, j });
+    }
+    return std.mem.eql(u8, a, b);
+}
+
+fn moduleDemo() void {
+    const user = User{ .power = 10000, .name = "ddd" };
+    user.diagnose();
+    User.diagnose(user);
+
+    const a: []const u8 = "ddd";
+    const b: []const u8 = "dad";
+
+    const v = eql(a, b);
+    std.debug.print("v: {}\n", .{v});
+    // for (a, b) |a_e, b_e| {
+    //     std.debug.print("a_e: {} b_e: {}\n", .{ a_e, b_e });
+    // }
+    // {
+    //     const v = "ddd";
+    //     std.debug.print("v res: {}", .{v});
+    // }
+    const pa = switch (a.len) {
+        0 => "sane",
+        1 => "one",
+        2 => "two",
+        3 => "three",
+        else => "many",
+    };
+    std.debug.print("pa: {s}", .{pa});
+
+    const un = 12222222222222222222222222221212121212121212121212121212121212121212121212121212121;
+    std.debug.print("un: {} type= {}", .{ un * un, @TypeOf(un) });
+}
+
 pub fn main() !void {
     const base64 = Base64.init();
     std.debug.print("character at index 28: {c}", .{base64._char_at(28)});
@@ -246,6 +285,7 @@ const Foo = struct {
     pub var blah = "xxx";
     const hi = 1;
 };
+
 fn foo(comptime T: type, ptr: *T) T {
     ptr.* += 1;
     return ptr.*;

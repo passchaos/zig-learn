@@ -392,8 +392,8 @@ pub fn main() !void {
 
     // // _ = @TypeOf(true, 5.2);
     // std.debug.print("blah: {} field: {}\n", .{ @hasDecl(Foo, "nope"), @field(Foo, "nope") });
-    // try dvuiDemo();
-    try enumDemo();
+    try dvuiDemo();
+    // try enumDemo();
 }
 
 fn enumDemo() anyerror!void {
@@ -569,7 +569,7 @@ fn auto_color() dvui.Color {
 
     const hue = @mod(@as(f32, @floatFromInt(i)) * golden_ratio * 360.0, 360.0);
 
-    // std.debug.print("hue value: {}\n", .{hue});
+    std.debug.print("hue value: {}\n", .{hue});
     const hsv_color =
         dvui.Color.HSV{ .h = hue, .s = 0.85, .v = 0.5, .a = 1.0 };
     return hsv_color.toColor();
@@ -658,7 +658,7 @@ fn gui_frame(_: SDLBackend) bool {
 
         const inner_ops: []const bool = &.{true};
 
-        for (0..3) |i| {
+        for (0..10) |i| {
             for (inner_ops) |op| {
                 var s1 = plot.line();
                 defer s1.deinit();
@@ -670,7 +670,7 @@ fn gui_frame(_: SDLBackend) bool {
 
                     var vx = v;
                     for (0..i) |_| {
-                        vx += 5.0;
+                        vx += std.math.pi / 2.0 / freq;
                     }
 
                     const fval: f32 = if (op) @sin(vx) else @cos(v);

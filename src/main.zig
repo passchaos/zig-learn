@@ -392,7 +392,73 @@ pub fn main() !void {
 
     // // _ = @TypeOf(true, 5.2);
     // std.debug.print("blah: {} field: {}\n", .{ @hasDecl(Foo, "nope"), @field(Foo, "nope") });
-    try dvuiDemo();
+    // try dvuiDemo();
+    try enumDemo();
+}
+
+fn enumDemo() anyerror!void {
+    const Type = enum {
+        ok,
+        not_ok,
+    };
+
+    const c = Type.ok;
+    std.debug.print("type info: {}\n", .{c});
+
+    const Value = enum(u2) {
+        zero,
+        one,
+        two,
+        ok,
+    };
+
+    const v1 = Value.zero;
+
+    const lv: u2 = 2;
+    // lv += 1;
+
+    const v2 = try std.meta.intToEnum(Value, lv);
+    // const v2 = @as(Value, @enumFromInt(lv));
+    std.debug.print("v1: {} v2: {}\n", .{ v1, v2 });
+
+    const ComplexTypeTag = enum {
+        ok,
+        not_ok,
+    };
+    const ComplexType = union(ComplexTypeTag) { ok: u8, not_ok: void };
+
+    const c1 = ComplexType{
+        .ok = 42,
+    };
+
+    switch (c1) {
+        .ok => |v| std.debug.print("v: {}\n", .{v}),
+        .not_ok => std.debug.print("not ok\n", .{}),
+    }
+    std.debug.print("c1: {}\n", .{c1});
+
+    const ComplexType1 = union(enum) {
+        int: i32,
+        boolean: bool,
+        non,
+
+        fn name(self: @This()) bool {
+            return switch (self) {
+                .int => |v| v > 0,
+                .boolean => |v| v,
+                .non => false,
+            };
+        }
+    };
+    var c2 = ComplexType1{ .boolean = false };
+    switch (c2) {
+        .int => |v| std.debug.print("int: {}\n", .{v}),
+        .boolean => |v| std.debug.print("boolean: {}\n", .{v}),
+        .non => std.debug.print("non\n", .{}),
+    }
+    c2.boolean = true;
+
+    std.debug.print("c2: {} name= {}\n", .{ c2, c2.name() });
 }
 
 var points_count: usize = 1;
@@ -421,6 +487,8 @@ fn dvuiDemo() !void {
     var interrupted = false;
 
     main_loop: while (true) {
+        // const start = std.time.nanoTimestamp();
+
         const nstime = win.beginWait(interrupted);
 
         try win.begin(nstime);
@@ -444,6 +512,8 @@ fn dvuiDemo() !void {
             }
         }
 
+        // const before_add_point = std.time.nanoTimestamp();
+
         if (points_count < MAX_POINTS_COUNT) {
             points_count += 1;
             dvui.refresh(&win, @src(), null);
@@ -459,7 +529,9 @@ fn dvuiDemo() !void {
         const wait_event_micros = win.waitTime(end_micros);
         interrupted = try backend.waitEventTimeout(wait_event_micros);
 
-        std.debug.print("new loop: wait_event_micros= {}\n", .{wait_event_micros});
+        // const loop_end = std.time.nanoTimestamp();
+
+        // std.debug.print("new loop: dur1= {} dur2= {}\n", .{ before_add_point - start, loop_end - before_add_point });
     }
 }
 
@@ -480,8 +552,10 @@ fn formatFrequency(gpa: std.mem.Allocator, freq: f64) ![]const u8 {
     }
 }
 
-const gridline_color = dvui.Color.fromHSLuv(0, 0, 50, 90);
-const subtick_gridline_color = dvui.Color.fromHSLuv(0, 0, 30, 70);
+// const gridline_color = dvui.Color.gray;
+const gridline_color = dvui.Color.fromHSLuv(0, 0, 0, 100);
+const subtick_gridline_color = dvui.Color.fromHSLuv(0, 0, 0, 30);
+// const subtick_gridline_color = dvui.Color.gray.lighten(-30);
 
 var next_auto_color_idx: usize = 0;
 
@@ -552,10 +626,11 @@ fn gui_frame(_: SDLBackend) bool {
                 .max = 2.0 * std.math.pi * freq,
                 .ticks = .{
                     .side = .left_or_top,
-                    .locations = .{ .auto = .{ .tick_num_suggestion = 10 } },
+                    // .locations = .{ .auto = .{ .tick_num_suggestion = 10 } },
                     .subticks = true,
                 },
                 .gridline_color = gridline_color,
+                .subtick_gridline_color = subtick_gridline_color,
             };
 
             var yaxis: dvui.PlotWidget.Axis = .{
@@ -565,6 +640,7 @@ fn gui_frame(_: SDLBackend) bool {
                 .min = -1.2,
                 .ticks = .{ .side = .both, .subticks = true },
                 .gridline_color = gridline_color,
+                .subtick_gridline_color = subtick_gridline_color,
             };
         };
 
@@ -574,6 +650,7 @@ fn gui_frame(_: SDLBackend) bool {
             .y_axis = &Static.yaxis,
             .border_thick = 1.0,
             .mouse_hover = true,
+            .spine_color = subtick_gridline_color,
         }, .{ .expand = .both, .gravity_x = 0.5, .gravity_y = 0.5 });
 
         next_auto_color_idx = 0;
@@ -589,14 +666,14 @@ fn gui_frame(_: SDLBackend) bool {
                 // const points: usize = 1000;
 
                 for (0..points_count + 1) |j| {
-                    const v = 2.0 * std.math.pi * @as(f64, @floatFromInt(j)) / @as(f64, @floatFromInt(MAX_POINTS_COUNT)) * freq;
+                    const v = 2.0 * std.math.pi * @as(f32, @floatFromInt(j)) / @as(f32, @floatFromInt(MAX_POINTS_COUNT)) * freq;
 
                     var vx = v;
                     for (0..i) |_| {
                         vx += 5.0;
                     }
 
-                    const fval: f64 = if (op) @sin(vx) else @cos(v);
+                    const fval: f32 = if (op) @sin(vx) else @cos(v);
                     // s1.point(@as(f64, @floatFromInt(j)) / @as(f64, @floatFromInt(points)), fval);
                     s1.point(v, fval);
                 }
@@ -992,11 +1069,18 @@ fn foo(comptime T: type, ptr: *T) T {
 }
 
 test "simple test" {
-    const gpa = std.testing.allocator;
-    var list: std.ArrayList(i32) = .empty;
-    defer list.deinit(gpa); // Try commenting this out and see if zig detects the memory leak!
-    try list.append(gpa, 42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
+    const str = "123456789";
+    const str1: []const u8 = str;
+
+    for (str1) |c| {
+        std.debug.print("{}|", .{c});
+    }
+
+    std.debug.print("str: {x} {}|\n", .{ str1, str[9] });
+
+    // const a: f32 = 2.3;
+    // const b = @as(u32, a);
+    // std.debug.print("b: {}\n", .{b});
 }
 
 test "fuzz example" {

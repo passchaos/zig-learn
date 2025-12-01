@@ -2,6 +2,13 @@ const std = @import("std");
 const zig_learn = @import("zig_learn");
 const User = @import("models/user.zig").User;
 
+var scale_val: f32 = 1.0;
+var show_dialog_outside_frame: bool = false;
+const dvui = @import("dvui");
+const SDLBackend = @import("sdl-backend");
+
+const window_icon_png = @embedFile("zig-favicon.png");
+
 fn basic_demo() !void {
     const ns = [_]u8{ 48, 24, 33, 6 };
     const sl = ns[1..3];
@@ -370,7 +377,7 @@ fn base64Demo() void {
 }
 
 pub fn main() !void {
-    tensorDemo();
+    // tensorDemo();
     // try basic_demo();
     // try allocator_demo();
     // struct_demo();
@@ -385,6 +392,592 @@ pub fn main() !void {
 
     // // _ = @TypeOf(true, 5.2);
     // std.debug.print("blah: {} field: {}\n", .{ @hasDecl(Foo, "nope"), @field(Foo, "nope") });
+    try dvuiDemo();
+}
+
+var points_count: usize = 1;
+
+const MAX_POINTS_COUNT: usize = 1000;
+
+fn dvuiDemo() !void {
+    var gpa_instance = std.heap.GeneralPurposeAllocator(.{}){};
+    const gpa = gpa_instance.allocator();
+
+    var backend = try SDLBackend.initWindow(.{ .allocator = gpa, .size = .{ .w = 800.0, .h = 600.0 }, .min_size = .{ .w = 250.0, .h = 350.0 }, .vsync = true, .title = "DVUI SDL Standalone Example", .icon = window_icon_png });
+    defer backend.deinit();
+
+    // _ = SDLBackend.c.SDL_EnableScreenSaver();
+
+    var win = try dvui.Window.init(@src(), gpa, backend.backend(), .{
+        .theme = switch (backend.preferredColorScheme() orelse .light) {
+            .light => dvui.Theme.builtin.adwaita_light,
+            .dark => dvui.Theme.builtin.adwaita_dark,
+        },
+    });
+    defer win.deinit();
+
+    // try win.fonts.addBuiltinFontsForTheme(win.gpa, dvui.Theme.builtin.adwaita_light);
+
+    var interrupted = false;
+
+    main_loop: while (true) {
+        const nstime = win.beginWait(interrupted);
+
+        try win.begin(nstime);
+        try backend.addAllEvents(&win);
+
+        _ = SDLBackend.c.SDL_SetRenderDrawColor(backend.renderer, 255, 255, 255, 255);
+        _ = SDLBackend.c.SDL_RenderClear(backend.renderer);
+
+        const keep_running = gui_frame(backend);
+        if (!keep_running) break :main_loop;
+
+        for (dvui.events()) |*event| {
+            if (event.evt == .window and event.evt.window.action == .close) {
+                std.debug.print("window close\n", .{});
+                break :main_loop;
+            }
+
+            if (event.evt == .app and event.evt.app.action == .quit) {
+                std.debug.print("app quit\n", .{});
+                break :main_loop;
+            }
+        }
+
+        if (points_count < MAX_POINTS_COUNT) {
+            points_count += 1;
+            dvui.refresh(&win, @src(), null);
+        }
+
+        const end_micros = try win.end(.{});
+
+        try backend.setCursor(win.cursorRequested());
+        try backend.textInputRect(win.textInputRequested());
+
+        try backend.renderPresent();
+
+        const wait_event_micros = win.waitTime(end_micros);
+        interrupted = try backend.waitEventTimeout(wait_event_micros);
+
+        std.debug.print("new loop: wait_event_micros= {}\n", .{wait_event_micros});
+    }
+}
+
+fn formatFrequency(gpa: std.mem.Allocator, freq: f64) ![]const u8 {
+    const exp = @log10(freq);
+    const rounded_exp = std.math.round(exp);
+
+    const val = std.math.pow(f64, 10, rounded_exp);
+
+    if (rounded_exp < 3) {
+        return try std.fmt.allocPrint(gpa, "{d:.0} Hz", .{val});
+    } else if (rounded_exp < 6) {
+        return try std.fmt.allocPrint(gpa, "{d:.0} kHz", .{val / 1e3});
+    } else if (rounded_exp < 9) {
+        return try std.fmt.allocPrint(gpa, "{d:.0} MHz", .{val / 1e6});
+    } else {
+        return try std.fmt.allocPrint(gpa, "{d:.0} GHz", .{val / 1e9});
+    }
+}
+
+const gridline_color = dvui.Color.fromHSLuv(0, 0, 50, 90);
+const subtick_gridline_color = dvui.Color.fromHSLuv(0, 0, 30, 70);
+
+var next_auto_color_idx: usize = 0;
+
+fn auto_color() dvui.Color {
+    const i = next_auto_color_idx;
+    next_auto_color_idx += 1;
+    // std.debug.print("i: {}\n", .{i});
+
+    const golden_ratio = comptime (std.math.sqrt(5.0) - 1.0) / 2.0;
+    // std.debug.print("golden ratio: {}\n", .{golden_ratio});
+
+    const hue = @mod(@as(f32, @floatFromInt(i)) * golden_ratio * 360.0, 360.0);
+
+    // std.debug.print("hue value: {}\n", .{hue});
+    const hsv_color =
+        dvui.Color.HSV{ .h = hue, .s = 0.85, .v = 0.5, .a = 1.0 };
+    return hsv_color.toColor();
+}
+
+fn gui_frame(_: SDLBackend) bool {
+    // {
+    //     var hbox = dvui.box(@src(), .{}, .{ .min_size_content = .{ .w = 800, .h = 600 }, .expand = .ratio });
+    //     defer hbox.deinit();
+
+    //     dvui.label(@src(), "Simple", .{}, .{});
+
+    //     const xs: []const f64 = &.{ 0, 1, 2, 3, 4, 5 };
+    //     const ys: []const f64 = &.{ 0, 4, 2, 6, 5, 9 };
+    //     dvui.plotXY(@src(), .{ .xs = xs, .ys = ys }, .{});
+    // }
+    // {
+    //     var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
+    //     defer hbox.deinit();
+
+    //     dvui.label(@src(), "Color and Thick", .{}, .{});
+
+    //     const xs: []const f64 = &.{ 0, 1, 2, 3, 4, 5 };
+    //     const ys: []const f64 = &.{ 9, 5, 6, 2, 4, 0 };
+    //     dvui.plotXY(@src(), .{ .thick = 2, .xs = xs, .ys = ys, .color = dvui.themeGet().err.fill orelse .red }, .{});
+    // }
+
+    // var save: ?enum { png, jpg } = null;
+    // {
+    //     var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
+    //     defer hbox.deinit();
+    //     if (dvui.button(@src(), "Save png", .{}, .{})) {
+    //         save = .png;
+    //     }
+    //     if (dvui.button(@src(), "Save jpg", .{}, .{})) {
+    //         save = .jpg;
+    //     }
+    // }
+
+    {
+        var vbox = dvui.box(@src(), .{}, .{ .expand = .both });
+        defer vbox.deinit();
+
+        // var pic: ?dvui.Picture = null;
+        // if (save != null) {
+        //     pic = dvui.Picture.start(vbox.data().contentRectScale().r);
+        // }
+
+        const freq: f32 = 3;
+        const Static = struct {
+            var xaxis: dvui.PlotWidget.Axis = .{
+                .name = "X Axis",
+                .min = 0.05,
+                .max = 2.0 * std.math.pi * freq,
+                .ticks = .{
+                    .side = .left_or_top,
+                    .locations = .{ .auto = .{ .tick_num_suggestion = 10 } },
+                    .subticks = true,
+                },
+                .gridline_color = gridline_color,
+            };
+
+            var yaxis: dvui.PlotWidget.Axis = .{
+                .name = "Y Axis",
+                // let plot figure out min
+                .max = 1.2,
+                .min = -1.2,
+                .ticks = .{ .side = .both, .subticks = true },
+                .gridline_color = gridline_color,
+            };
+        };
+
+        var plot = dvui.plot(@src(), .{
+            .title = "Plot Title",
+            .x_axis = &Static.xaxis,
+            .y_axis = &Static.yaxis,
+            .border_thick = 1.0,
+            .mouse_hover = true,
+        }, .{ .expand = .both, .gravity_x = 0.5, .gravity_y = 0.5 });
+
+        next_auto_color_idx = 0;
+        defer plot.deinit();
+
+        const inner_ops: []const bool = &.{true};
+
+        for (0..3) |i| {
+            for (inner_ops) |op| {
+                var s1 = plot.line();
+                defer s1.deinit();
+
+                // const points: usize = 1000;
+
+                for (0..points_count + 1) |j| {
+                    const v = 2.0 * std.math.pi * @as(f64, @floatFromInt(j)) / @as(f64, @floatFromInt(MAX_POINTS_COUNT)) * freq;
+
+                    var vx = v;
+                    for (0..i) |_| {
+                        vx += 5.0;
+                    }
+
+                    const fval: f64 = if (op) @sin(vx) else @cos(v);
+                    // s1.point(@as(f64, @floatFromInt(j)) / @as(f64, @floatFromInt(points)), fval);
+                    s1.point(v, fval);
+                }
+
+                const color = auto_color();
+                // std.debug.print("s1 color: {f}\n", .{color});
+                s1.stroke(1.8, color);
+            }
+        }
+
+        // if (pic) |*p| {
+        //     // `save` is not null because `pic` is not null
+        //     p.stop();
+        //     defer p.deinit();
+
+        //     const filename: []const u8 = switch (save.?) {
+        //         .png => "plot.png",
+        //         .jpg => "plot.jpg",
+        //     };
+
+        //     if (dvui.backend.kind == .web) blk: {
+        //         const min_buffer_size = @max(dvui.PNGEncoder.min_buffer_size, dvui.JPGEncoder.min_buffer_size);
+        //         var writer = std.Io.Writer.Allocating.initCapacity(dvui.currentWindow().arena(), min_buffer_size) catch |err| {
+        //             dvui.logError(@src(), err, "Failed to init writer for plot {t} image", .{save.?});
+        //             break :blk;
+        //         };
+        //         defer writer.deinit();
+        //         (switch (save.?) {
+        //             .png => p.png(&writer.writer),
+        //             .jpg => p.jpg(&writer.writer),
+        //         }) catch |err| {
+        //             dvui.logError(@src(), err, "Failed to write plot {t} image", .{save.?});
+        //             break :blk;
+        //         };
+        //         // No need to call `writer.flush` because `Allocating` doesn't drain it's buffer anywhere
+        //         dvui.backend.downloadData(filename, writer.written()) catch |err| {
+        //             dvui.logError(@src(), err, "Could not download {s}", .{filename});
+        //         };
+        //     } else if (!dvui.useTinyFileDialogs) {
+        //         dvui.toast(@src(), .{ .message = "Tiny File Dilaogs disabled" });
+        //     } else {
+        //         const maybe_path = dvui.dialogNativeFileSave(dvui.currentWindow().lifo(), .{ .path = filename }) catch null;
+        //         if (maybe_path) |path| blk: {
+        //             defer dvui.currentWindow().lifo().free(path);
+
+        //             var file = std.fs.createFileAbsoluteZ(path, .{}) catch |err| {
+        //                 dvui.log.debug("Failed to create file {s}, got {any}", .{ path, err });
+        //                 dvui.toast(@src(), .{ .message = "Failed to create file" });
+        //                 break :blk;
+        //             };
+        //             defer file.close();
+
+        //             var buffer: [256]u8 = undefined;
+        //             var writer = file.writer(&buffer);
+
+        //             (switch (save.?) {
+        //                 .png => p.png(&writer.interface),
+        //                 .jpg => p.jpg(&writer.interface),
+        //             }) catch |err| {
+        //                 dvui.logError(@src(), err, "Failed to write plot {t} to file {s}", .{ save.?, path });
+        //             };
+        //             // End writing to file and potentially truncate any additional preexisting data
+        //             writer.end() catch |err| {
+        //                 dvui.logError(@src(), err, "Failed to end file write for {s}", .{path});
+        //             };
+        //         }
+        //     }
+        // }
+    }
+
+    // {
+    //     const S = struct {
+    //         var resistance: f64 = 159;
+    //         var capacitance: f64 = 1e-6;
+
+    //         var xaxis: dvui.PlotWidget.Axis = .{
+    //             .name = "Frequency",
+    //             .scale = .{ .log = .{} },
+    //             .ticks = .{
+    //                 .format = .{
+    //                     .custom = formatFrequency,
+    //                 },
+    //                 .subticks = true,
+    //             },
+    //             .gridline_color = gridline_color,
+    //             .subtick_gridline_color = subtick_gridline_color,
+    //         };
+
+    //         var yaxis: dvui.PlotWidget.Axis = .{
+    //             .name = "Amplitude (dB)",
+    //             .max = 10,
+    //             .ticks = .{
+    //                 .locations = .{
+    //                     .auto = .{ .tick_num_suggestion = 10 },
+    //                 },
+    //             },
+    //             .gridline_color = gridline_color,
+    //         };
+    //     };
+
+    //     dvui.label(@src(), "Resistance (Ohm)", .{}, .{});
+    //     const r_res = dvui.textEntryNumber(@src(), f64, .{
+    //         .value = &S.resistance,
+    //         .min = std.math.floatMin(f64),
+    //     }, .{});
+
+    //     dvui.label(@src(), "Capacitance (Farad)", .{}, .{});
+    //     const c_res = dvui.textEntryNumber(@src(), f64, .{
+    //         .value = &S.capacitance,
+    //         .min = std.math.floatMin(f64),
+    //     }, .{});
+
+    //     const valid = r_res.value == .Valid and c_res.value == .Valid;
+
+    //     const cutoff_angular_freq = 1 / (S.resistance * S.capacitance);
+
+    //     dvui.label(@src(), "Cutoff frequency: {:.2} Hz", .{cutoff_angular_freq / (2 * std.math.pi)}, .{});
+
+    //     var vbox = dvui.box(@src(), .{}, .{ .min_size_content = .{ .w = 300, .h = 100 }, .expand = .ratio });
+    //     defer vbox.deinit();
+
+    //     var plot = dvui.plot(@src(), .{
+    //         .title = "RC low-pass filter",
+    //         .x_axis = &S.xaxis,
+    //         .y_axis = &S.yaxis,
+    //         .border_thick = 2.0,
+    //         .mouse_hover = true,
+    //     }, .{ .expand = .both });
+    //     defer plot.deinit();
+
+    //     var s1 = plot.line();
+    //     defer s1.deinit();
+
+    //     const start_exp: f64 = 0;
+    //     const end_exp: f64 = 8;
+    //     const points: usize = 1000;
+    //     const step: f64 = (end_exp - start_exp) / @as(f64, @floatFromInt(points));
+
+    //     for (0..points) |i| {
+    //         const exp = start_exp + step * @as(f64, @floatFromInt(i));
+
+    //         const freq: f64 = std.math.pow(f64, 10, exp);
+    //         const angular_freq: f64 = 2 * std.math.pi * freq;
+
+    //         const tmp = angular_freq * S.resistance * S.capacitance;
+    //         const amplitude = std.math.sqrt(1 / (1 + tmp * tmp));
+    //         const amplitude_db: f64 = 20 * @log10(amplitude);
+    //         s1.point(freq, amplitude_db);
+    //     }
+    //     s1.stroke(1, if (valid) dvui.themeGet().focus else dvui.Color.red);
+    // }
+
+    // {
+    //     const S = struct {
+    //         var stddev: f64 = 1.0;
+    //         var mean: f64 = 0;
+    //         var prng_seed: u64 = 2807233815221062137;
+    //         var npoints: u32 = 64;
+    //     };
+
+    //     const Static = struct {
+    //         var xaxis: dvui.PlotWidget.Axis = .{
+    //             .name = "Value",
+    //             .ticks = .{
+    //                 .locations = .{
+    //                     .auto = .{ .tick_num_suggestion = 9 },
+    //                 },
+    //             },
+    //             .min = -2,
+    //             .max = 2,
+    //         };
+
+    //         var yaxis: dvui.PlotWidget.Axis = .{
+    //             .name = "Count",
+    //             .ticks = .{
+    //                 .locations = .{
+    //                     .auto = .{ .tick_num_suggestion = 6 },
+    //                 },
+    //             },
+    //             .max = 0,
+    //         };
+    //     };
+
+    //     dvui.label(@src(), "Standard Deviation", .{}, .{});
+    //     const s_res = dvui.textEntryNumber(@src(), f64, .{
+    //         .value = &S.stddev,
+    //     }, .{});
+
+    //     dvui.label(@src(), "Mean", .{}, .{});
+    //     const m_res = dvui.textEntryNumber(@src(), f64, .{
+    //         .value = &S.mean,
+    //     }, .{});
+
+    //     dvui.label(@src(), "PRNG Seed", .{}, .{});
+    //     const seed_res = dvui.textEntryNumber(@src(), u64, .{
+    //         .value = &S.prng_seed,
+    //     }, .{});
+
+    //     dvui.label(@src(), "Number of Points", .{}, .{});
+    //     const npoints_res = dvui.textEntryNumber(@src(), u32, .{
+    //         .value = &S.npoints,
+    //     }, .{});
+
+    //     const valid = s_res.value == .Valid and m_res.value == .Valid and seed_res.value == .Valid and npoints_res.value == .Valid;
+
+    //     var vbox = dvui.box(@src(), .{}, .{ .min_size_content = .{ .w = 300, .h = 100 }, .expand = .ratio });
+    //     defer vbox.deinit();
+
+    //     var default_prng: std.Random.DefaultPrng = .init(S.prng_seed);
+    //     const prng = default_prng.random();
+
+    //     var histogram: [64]f64 = undefined;
+    //     @memset(histogram[0..], 0);
+
+    //     Static.yaxis.max.? = 0;
+
+    //     const scalar = @as(f64, @floatFromInt(histogram.len)) / (Static.xaxis.max.? - Static.xaxis.min.?);
+    //     for (0..S.npoints) |_| {
+    //         const val = prng.floatNorm(f64) * S.stddev + S.mean;
+    //         if (val < Static.xaxis.min.? or val >= Static.xaxis.max.?) continue;
+
+    //         const bin: usize = @intFromFloat((val - Static.xaxis.min.?) * scalar);
+    //         histogram[bin] += 1;
+    //         Static.yaxis.max.? = @max(Static.yaxis.max.?, histogram[bin]);
+    //     }
+
+    //     var plot = dvui.plot(@src(), .{
+    //         .title = "Random Normal Values",
+    //         .x_axis = &Static.xaxis,
+    //         .y_axis = &Static.yaxis,
+    //         .border_thick = 2.0,
+    //         .mouse_hover = true,
+    //     }, .{ .expand = .both });
+    //     defer plot.deinit();
+
+    //     const bar_width = (Static.xaxis.max.? - Static.xaxis.min.?) / @as(f64, @floatFromInt(histogram.len));
+    //     for (histogram, 0..) |count, i| {
+    //         const val = Static.xaxis.min.? + @as(f64, @floatFromInt(i)) * bar_width;
+    //         plot.bar(.{
+    //             .x = val,
+    //             .y = 0,
+    //             .w = bar_width,
+    //             .h = count,
+    //             .color = if (valid) dvui.themeGet().focus else dvui.Color.red,
+    //         });
+    //     }
+    // }
+    // {
+    //     var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{ .style = .window, .background = true, .expand = .horizontal, .name = "main" });
+    //     defer hbox.deinit();
+
+    //     var m = dvui.menu(@src(), .horizontal, .{});
+    //     defer m.deinit();
+
+    //     if (dvui.menuItemLabel(@src(), "File", .{ .submenu = true }, .{})) |r| {
+    //         var fw = dvui.floatingMenu(@src(), .{ .from = r }, .{});
+    //         defer fw.deinit();
+    //     }
+    // }
+
+    // var scroll = dvui.scrollArea(@src(), .{}, .{ .expand = .both });
+    // defer scroll.deinit();
+
+    // var tl = dvui.textLayout(@src(), .{}, .{ .expand = .horizontal, .font_style = .title_4 });
+    // const lorem = "This example shows how to use dvui in a normal application.";
+    // tl.addText(lorem, .{});
+    // tl.deinit();
+
+    // var tl2 = dvui.textLayout(@src(), .{}, .{ .expand = .horizontal });
+    // tl2.addText(
+    //     \\DVUI
+    //     \\- paints the entire window
+    //     \\- can show floating windows and dialogs
+    //     \\- example menu at the top of the window
+    //     \\- rest of the window is a scroll area
+    // , .{});
+    // tl2.addText("\n\n", .{});
+    // tl2.addText("Framerate is variable and adjusts as needed for input events and animations.", .{});
+    // tl2.addText("\n\n", .{});
+    // // if (vsync) {
+    // tl2.addText("Framerate is capped by vsync.", .{});
+    // // } else {
+    // //     tl2.addText("Framerate is uncapped.", .{});
+    // // }
+    // tl2.addText("\n\n", .{});
+    // tl2.addText("Cursor is always being set by dvui.", .{});
+    // tl2.addText("\n\n", .{});
+    // if (dvui.useFreeType) {
+    //     tl2.addText("Fonts are being rendered by FreeType 2.", .{});
+    // } else {
+    //     tl2.addText("Fonts are being rendered by stb_truetype.", .{});
+    // }
+    // tl2.deinit();
+
+    // const label = if (dvui.Examples.show_demo_window) "Hide Demo Window" else "Show Demo Window";
+    // if (dvui.button(@src(), label, .{}, .{})) {
+    //     dvui.Examples.show_demo_window = !dvui.Examples.show_demo_window;
+    // }
+
+    // if (dvui.button(@src(), "Debug Window", .{}, .{})) {
+    //     dvui.toggleDebugWindow();
+    // }
+
+    // {
+    //     var scaler = dvui.scale(@src(), .{ .scale = &scale_val }, .{ .expand = .horizontal });
+    //     defer scaler.deinit();
+
+    //     {
+    //         var hbox = dvui.box(@src(), .{ .dir = .horizontal }, .{});
+    //         defer hbox.deinit();
+
+    //         if (dvui.button(@src(), "Zoom In", .{}, .{})) {
+    //             scale_val = @round(dvui.themeGet().font_body.size * scale_val + 1.0) / dvui.themeGet().font_body.size;
+    //         }
+
+    //         if (dvui.button(@src(), "Zoom Out", .{}, .{})) {
+    //             scale_val = @round(dvui.themeGet().font_body.size * scale_val - 1.0) / dvui.themeGet().font_body.size;
+    //         }
+    //     }
+
+    //     dvui.labelNoFmt(@src(), "Below is drawn directly by the backend, not going through DVUI.", .{}, .{ .margin = .{ .x = 4 } });
+
+    //     var box = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal, .min_size_content = .{ .h = 40 }, .background = true, .margin = .{ .x = 8, .w = 8 } });
+    //     defer box.deinit();
+
+    //     // Here is some arbitrary drawing that doesn't have to go through DVUI.
+    //     // It can be interleaved with DVUI drawing.
+    //     // NOTE: This only works in the main window (not floating subwindows
+    //     // like dialogs).
+
+    //     // get the screen rectangle for the box
+    //     const rs = box.data().contentRectScale();
+
+    //     // rs.r is the pixel rectangle, rs.s is the scale factor (like for
+    //     // hidpi screens or display scaling)
+    //     var rect: if (SDLBackend.sdl3) SDLBackend.c.SDL_FRect else SDLBackend.c.SDL_Rect = undefined;
+    //     if (SDLBackend.sdl3) rect = .{
+    //         .x = (rs.r.x + 4 * rs.s),
+    //         .y = (rs.r.y + 4 * rs.s),
+    //         .w = (20 * rs.s),
+    //         .h = (20 * rs.s),
+    //     } else rect = .{
+    //         .x = @intFromFloat(rs.r.x + 4 * rs.s),
+    //         .y = @intFromFloat(rs.r.y + 4 * rs.s),
+    //         .w = @intFromFloat(20 * rs.s),
+    //         .h = @intFromFloat(20 * rs.s),
+    //     };
+    //     _ = SDLBackend.c.SDL_SetRenderDrawColor(backend.renderer, 255, 0, 0, 255);
+    //     _ = SDLBackend.c.SDL_RenderFillRect(backend.renderer, &rect);
+
+    //     rect.x += if (SDLBackend.sdl3) 24 * rs.s else @intFromFloat(24 * rs.s);
+    //     _ = SDLBackend.c.SDL_SetRenderDrawColor(backend.renderer, 0, 255, 0, 255);
+    //     _ = SDLBackend.c.SDL_RenderFillRect(backend.renderer, &rect);
+
+    //     rect.x += if (SDLBackend.sdl3) 24 * rs.s else @intFromFloat(24 * rs.s);
+    //     _ = SDLBackend.c.SDL_SetRenderDrawColor(backend.renderer, 0, 0, 255, 255);
+    //     _ = SDLBackend.c.SDL_RenderFillRect(backend.renderer, &rect);
+
+    //     _ = SDLBackend.c.SDL_SetRenderDrawColor(backend.renderer, 255, 0, 255, 255);
+
+    //     if (SDLBackend.sdl3)
+    //         _ = SDLBackend.c.SDL_RenderLine(backend.renderer, (rs.r.x + 4 * rs.s), (rs.r.y + 30 * rs.s), (rs.r.x + rs.r.w - 8 * rs.s), (rs.r.y + 30 * rs.s))
+    //     else
+    //         _ = SDLBackend.c.SDL_RenderDrawLine(backend.renderer, @intFromFloat(rs.r.x + 4 * rs.s), @intFromFloat(rs.r.y + 30 * rs.s), @intFromFloat(rs.r.x + rs.r.w - 8 * rs.s), @intFromFloat(rs.r.y + 30 * rs.s));
+    // }
+
+    // if (dvui.button(@src(), "Show Dialog From\nOutside Frame", .{}, .{})) {
+    //     show_dialog_outside_frame = true;
+    // }
+
+    // // look at demo() for examples of dvui widgets, shows in a floating window
+    // dvui.Examples.demo();
+
+    // // check for quitting
+    // for (dvui.events()) |*e| {
+    //     // assume we only have a single window
+    //     if (e.evt == .window and e.evt.window.action == .close) return false;
+    //     if (e.evt == .app and e.evt.app.action == .quit) return false;
+    // }
+
+    return true;
 }
 
 const Foo = struct {

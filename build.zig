@@ -89,6 +89,12 @@ pub fn build(b: *std.Build) void {
     // by passing `--prefix` or `-p`.
     b.installArtifact(exe);
 
+    const dvui_dep = b.dependency("dvui", .{ .target = target, .optimize = optimize, .backend = .sdl3 });
+
+    mod.addImport("sdl-backend", dvui_dep.module("sdl3"));
+    exe.root_module.addImport("sdl-backend", dvui_dep.module("sdl3"));
+    exe.root_module.addImport("dvui", dvui_dep.module("dvui_sdl3"));
+
     // This creates a top level step. Top level steps have a name and can be
     // invoked by name when running `zig build` (e.g. `zig build run`).
     // This will evaluate the `run` step rather than the default step.
